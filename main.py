@@ -1,4 +1,3 @@
-import uvicorn
 from fastapi import FastAPI, Form, File, UploadFile
 from fastapi.responses import JSONResponse
 import requests, json, re, urllib3, os
@@ -297,5 +296,3 @@ def chat(
         "image_urls": get_details.get("image_urls", []),
         "conversation_id": conversation_id
     }
-if __name__ =="__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
