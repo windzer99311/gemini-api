@@ -1,4 +1,5 @@
-from fastapi import FastAPI,Form, File, UploadFile
+import uvicorn
+from fastapi import FastAPI, Form, File, UploadFile
 from fastapi.responses import JSONResponse
 import requests, json, re, urllib3, os
 import uuid
@@ -22,6 +23,15 @@ params = {
 COOKIE_FILE = "/tmp/cookies.json"
 MODEL_FILE = "/tmp/model.json"
 CONV_FILE = "/tmp/conversation_state.json"
+
+# --- Shared session (created once, reused across requests) ---
+_session = None
+
+def get_session():
+    global _session
+    if _session is None:
+        _session = requests.session()
+    return _session
 
 @app.get("/")
 def read_root():
@@ -186,11 +196,12 @@ def api_set_cookies(data: dict):
         "__Secure-1PSID": psid,
         "__Secure-1PSIDTS": psidts
     }
+
     with open(COOKIE_FILE, "w") as f:
         json.dump(cookie_data, f, indent=4)
 
     try:
-        session = requests.session()
+        session = get_session()
         session.cookies.update(cookie_data)
         action_token = get_action_token(session=session)
         models = get_models(session=session, action_token=action_token)
@@ -240,7 +251,8 @@ def chat(
     attachment_bytes = None
     if attachment:
         attachment_bytes = attachment.file.read()
-    session = requests.session()
+
+    session = get_session()
 
     try:
         cookies = set_cookies()
@@ -278,7 +290,6 @@ def chat(
     choice_id = get_details.get("choice_id", choice_id)
 
     save_conv_state(conversation_id, response_id, choice_id)
-    session.close()
 
     return {
         "success": True,
@@ -286,3 +297,5 @@ def chat(
         "image_urls": get_details.get("image_urls", []),
         "conversation_id": conversation_id
     }
+if __name__ =="__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
