@@ -186,23 +186,24 @@ def api_set_cookies(data: dict):
         "__Secure-1PSID": psid,
         "__Secure-1PSIDTS": psidts
     }
+    return cookie_data
 
-    with open(COOKIE_FILE, "w") as f:
-        json.dump(cookie_data, f, indent=4)
+    # with open(COOKIE_FILE, "w") as f:
+    #     json.dump(cookie_data, f, indent=4)
 
-    try:
-        session = requests.session()
-        session.cookies.update(cookie_data)
-        action_token = get_action_token(session=session)
-        models = get_models(session=session, action_token=action_token)
+    # try:
+    #     session = requests.session()
+    #     session.cookies.update(cookie_data)
+    #     action_token = get_action_token(session=session)
+    #     models = get_models(session=session, action_token=action_token)
 
-        return {
-            "success": True,
-            "message": "Cookies saved successfully.",
-            "available_models": models
-        }
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+    #     return {
+    #         "success": True,
+    #         "message": "Cookies saved successfully.",
+    #         "available_models": models
+    #     }
+    # except Exception as e:
+    #     return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
 @app.post('/set_model')
 def api_set_model(data: dict):
