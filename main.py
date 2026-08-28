@@ -1,10 +1,16 @@
-from fastapi import FastAPI, Response
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 import requests, json, re, urllib3, os
 import uuid
+import uvicorn
 from action_token import get_action_token
 from available_models import get_models
+from add_attachment import return_attachment
 
+COOKIE_FILE = "/tmp/cookies.json"
+MODEL_FILE = "/tmp/model.json"
+CONV_FILE = "/tmp/conversation_state.json"
+model_list={1:"cf41b0e0dd7d53e5",2:"fbb127bbb056c959",3:"9d8ca3786ebdfbea"}
 app = FastAPI()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 url = "https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate"
@@ -16,55 +22,73 @@ params = {
     "rt": "c"
 }
 
-# Use /tmp/ for serverless environments like Vercel
-COOKIE_FILE = "/tmp/cookies.json"
-MODEL_FILE = "/tmp/model.json"
-CONV_FILE = "/tmp/conversation_state.json"
-
-@app.get("/")
-def read_root():
-    return {"message": "It's working!"}
 
 def build_model_config(model_hash: str) -> list:
     client_uuid = str(uuid.uuid4()).upper()
     return f'[1,null,null,null,"{model_hash}",null,null,null,[4,5,6,8],null,null,null,null,null,1,1,"{client_uuid}"]'
 
+
 PLACEHOLDER_RE = re.compile(r'^http://googleusercontent\.com/image_generation_content/\d+\s*$')
 
-def send_message(session, action_token, message, language, conversation_id, response_id, choice_id):
+def send_message(session, action_token, message, selected_model,language, con_id, r_id, c_id, attachment):
+# The inner array structured with variable integration
+    attachment_data=return_attachment(session,attachment)
+    headers=get_header(selected_model)
     inner_array = [
-        [message, 0, None, None, None, None, 0],
+        [message, 0, None, attachment_data, None, None, 0],
         [language],
-        [conversation_id, response_id, choice_id, None, None, None, None, None, None, ""],
+        [con_id, r_id, c_id, None, None, None, None, None, None, ""],
         "",
-        "", None, [1], 1, None, None, 1, 0,
+        "",None, [1], 1, None, None, 1, 0,
         None, None, None, None, None, [[0]], 0,
         None, None, None, None, None, None, None, None, 1,
         None, None, [4], None, None, None, None, None, None, None, None, None, None,
-        [1], None, None, None, None, None, None, None, None, None, None, None,
-        0, None, None, None, None, None,
+        [1],None, None, None, None, None, None, None, None, None, None, None,
+        0,None, None, None, None, None,
         str(uuid.uuid4()),
         None, [1], None, None, None, None, None, None,
-        2, None, None, None, None, None, None, None, None, None, None,
-        1, 1, None, None, None, None, None, None, None, None, None, None, 0
+        2,None, None, None, None, None, None, None, None, None, None,
+        1, 1,None, None, None, None, None, None, None, None, None, None,0
     ]
     payload = {
         "f.req": json.dumps([None, json.dumps(inner_array)]),
         "at": action_token.get("at")
     }
-    response = session.post(url, params=params, stream=True, data=payload, verify=False)
+    session.headers.update(headers)
+    response = session.post(url, params=params,stream=True, data=payload, verify=False)
     full_text = ""
     printed_len = 0
     seen_images = set()
-
     for line in response.iter_lines(decode_unicode=True):
         if line is None:
             continue
         full_text += line + "\n"
+
         parsed = parse_response(full_text)
+
         text_state = parsed.get("text")
         if text_state and len(text_state) > printed_len:
+            new_chunk = text_state[printed_len:]
             printed_len = len(text_state)
+            # skip the internal image placeholder token, it's not real content
+
+            if not PLACEHOLDER_RE.match(text_state.strip()):
+                if "googleusercontent.com/image_generation_content" not in new_chunk:
+                    print(new_chunk, end="", flush=True)
+
+        for img_url in parsed.get("image_urls", []):
+            if img_url not in seen_images:
+                seen_images.add(img_url+"=s1024-rj?alr=yes")
+    if seen_images:
+        img_1=seen_images.pop()
+        img_2=session.get(img_1)
+        img_3=session.get(img_2.text)
+        response = session.get(img_3.text, stream=True)
+        if response.status_code == 200:
+            with open(r"C:\Users\Karan Kumar\PycharmProjects\pythonProject\self_reversed_engineered_gemini\downloaded_files\images\downloaded_image.jpg", "wb") as file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    file.write(chunk)
+    print()
     return full_text
 
 IMAGE_URL_RE = re.compile(r'^https://lh3\.googleusercontent\.com/gg-dl/')
@@ -117,6 +141,8 @@ def parse_response(raw_text):
                     if isinstance(text_field, list) and text_field and isinstance(text_field[0], str):
                         result["text"] = text_field[0]
 
+            # scan the WHOLE inner block, not just candidate — position of
+            # the image tuple shifts between responses
             _find_image_urls(inner, image_urls)
 
     if image_urls:
@@ -124,10 +150,12 @@ def parse_response(raw_text):
 
     return result
 
+
 def set_cookies():
     with open(COOKIE_FILE, "r") as f:
         cookies = json.load(f)
     return cookies
+
 
 def get_header(selected_model):
     headers = {
@@ -136,11 +164,17 @@ def get_header(selected_model):
     }
     return headers
 
+
+# --- File saving functions for persistent chat ---
+
+
+
 def load_conv_state():
     if os.path.exists(CONV_FILE):
         with open(CONV_FILE, "r") as f:
             return json.load(f)
     return {"conversation_id": "", "response_id": "", "choice_id": ""}
+
 
 def save_conv_state(conv_id, resp_id, cho_id):
     with open(CONV_FILE, "w") as f:
@@ -149,6 +183,9 @@ def save_conv_state(conv_id, resp_id, cho_id):
             "response_id": resp_id or "",
             "choice_id": cho_id or ""
         }, f, indent=4)
+
+
+# --- FastAPI Routes ---
 
 @app.post('/set_cookies')
 def api_set_cookies(data: dict):
@@ -163,9 +200,11 @@ def api_set_cookies(data: dict):
         "__Secure-1PSIDTS": psidts
     }
 
+    # Save to cookies.json
     with open(COOKIE_FILE, "w") as f:
         json.dump(cookie_data, f, indent=4)
 
+    # Test connection and fetch available models
     try:
         session = requests.session()
         session.cookies.update(cookie_data)
@@ -179,6 +218,7 @@ def api_set_cookies(data: dict):
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
 
 @app.post('/set_model')
 def api_set_model(data: dict):
@@ -196,9 +236,20 @@ def api_set_model(data: dict):
 
     return {"success": True, "message": "Model saved successfully to model.json"}
 
+
 @app.post('/chat')
 def chat(data: dict):
     msg = data.get("message")
+    if data.get("model"):
+        selected_model=model_list[int(data.get("model"))]
+    else:
+        selected_model=model_list[1]
+    if data.get("attachment"):
+        attachment=data.get("attachment")
+    else:
+        attachment=None
+
+    # Check if we should continue previous chat (supports boolean True or string "true")
     prev_chat_cont = data.get("previous_chat_continue", "false")
     should_continue = str(prev_chat_cont).lower() == "true"
 
@@ -212,13 +263,7 @@ def chat(data: dict):
     except FileNotFoundError:
         return JSONResponse(status_code=400, content={"success": False, "error": "Cookies not found. Please use /set_cookies first."})
 
-    try:
-        with open(MODEL_FILE, "r") as f:
-            model_id = json.load(f)
-    except FileNotFoundError:
-        return JSONResponse(status_code=400, content={"success": False, "error": "Model not found. Please use /set_model first."})
 
-    selected_model = model_id.get("model")
     headers = get_header(selected_model)
     session.cookies.update(cookies)
 
@@ -230,6 +275,7 @@ def chat(data: dict):
     session.headers.update(headers)
     language = "en-GB"
 
+    # Logic to continue or start fresh
     if should_continue:
         state = load_conv_state()
         conversation_id = state.get("conversation_id", "")
@@ -239,21 +285,33 @@ def chat(data: dict):
         conversation_id = ""
         response_id = ""
         choice_id = ""
+        # Wipe the file so an old state isn't accidentally loaded later
         save_conv_state("", "", "")
 
-    result = send_message(session, action_token, msg, language, conversation_id, response_id, choice_id)
+    # Send message exactly as before
+    result = send_message(session, action_token, msg, selected_model,language, conversation_id, response_id, choice_id,attachment)
+
+    # Parse the text and new IDs
     get_details = parse_response(result)
 
+    # Update IDs
     conversation_id = get_details.get("conversation_id", conversation_id)
     response_id = get_details.get("response_id", response_id)
     choice_id = get_details.get("choice_id", choice_id)
 
+    # Save the updated IDs to the file so it remembers context for the next request
     save_conv_state(conversation_id, response_id, choice_id)
+
     session.close()
 
+    # Return as JSON API response
     return {
         "success": True,
         "text": get_details.get("text", ""),
         "image_urls": get_details.get("image_urls", []),
         "conversation_id": conversation_id
     }
+
+
+if __name__ == "__main__":
+    uvicorn.run(app)
