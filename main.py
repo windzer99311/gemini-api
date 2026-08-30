@@ -5,7 +5,7 @@ import uuid
 from action_token import get_action_token
 from available_models import get_models
 from add_attachment import return_attachment
-
+from continue_old_chat import get_chat_resume_setting
 app = FastAPI()
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 model_list={1:"cf41b0e0dd7d53e5",2:"fbb127bbb056c959",3:"9d8ca3786ebdfbea"}
@@ -19,9 +19,9 @@ params = {
 }
 
 # Use /tmp/ for serverless environments like Vercel
-COOKIE_FILE = "/tmp/cookies.json"
-MODEL_FILE = "/tmp/model.json"
-CONV_FILE = "/tmp/conversation_state.json"
+COOKIE_FILE = "cookies.json"
+MODEL_FILE = "model.json"
+CONV_FILE = "conversation_state.json"
 
 # --- Shared session (created once, reused across requests) ---
 _session = None
@@ -169,7 +169,10 @@ def get_header(selected_model):
     }
     return headers
 
-def load_conv_state():
+def load_conv_state(session,action_token,old_conversation):
+    if old_conversation:
+        result = get_chat_resume_setting(session=session, action_token=action_token, conversation_id=old_conversation)
+        return {"conversation_id": result["c_id"], "response_id": result["r_id"], "choice_id": result["rc_id"]}
     if os.path.exists(CONV_FILE):
         with open(CONV_FILE, "r") as f:
             return json.load(f)
@@ -235,8 +238,10 @@ def chat(
         message: str = Form(...),
         previous_chat_continue: str = Form("false"),
         model: str = Form("1"),
-        attachment: UploadFile = File(None)  # Optional file
+        attachment: UploadFile = File(None),  # Optional file
+        old_conversation: str = Form(None),
 ):
+    print("old_conversation: ",old_conversation)
     # 1. Handle continuation flag
     should_continue = str(previous_chat_continue).lower() == "true"
 
@@ -271,7 +276,7 @@ def chat(
     language = "en-GB"
 
     if should_continue :
-        state = load_conv_state()
+        state = load_conv_state(session,action_token,old_conversation)
         conversation_id = state.get("conversation_id", "")
         response_id = state.get("response_id", "")
         choice_id = state.get("choice_id", "")
