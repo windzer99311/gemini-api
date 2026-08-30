@@ -19,9 +19,9 @@ params = {
 }
 
 # Use /tmp/ for serverless environments like Vercel
-COOKIE_FILE = "cookies.json"
-MODEL_FILE = "model.json"
-CONV_FILE = "conversation_state.json"
+COOKIE_FILE = "/tmp/cookies.json"
+MODEL_FILE = "/tmp/model.json"
+CONV_FILE = "/tmp/conversation_state.json"
 
 # --- Shared session (created once, reused across requests) ---
 _session = None
