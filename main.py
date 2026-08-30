@@ -93,12 +93,14 @@ def send_message(session, action_token, message,selected_model,attachment, langu
         for img_url in parsed.get("image_urls", []):
             if img_url not in seen_images:
                 seen_images.add(img_url + "=s1024-rj?alr=yes")
-    # if seen_images:
-    #     img_1 = seen_images.pop()
-    #     img_2 = session.get(img_1)
-    #     img_3 = session.get(img_2.text)
+    resolved_urls = []
+    if seen_images:
+        img_1 = seen_images.pop()
+        img_2 = session.get(img_1)
+        img_3 = session.get(img_2.text)
+        resolved_urls.append(img_3.text)
     print()
-    return full_text
+    return full_text, resolved_urls
 
 IMAGE_URL_RE = re.compile(r'^https://lh3\.googleusercontent\.com/gg-dl/')
 
@@ -154,7 +156,6 @@ def parse_response(raw_text):
 
     if image_urls:
         result["image_urls"] = list(dict.fromkeys(image_urls))
-
     return result
 
 def set_cookies():
@@ -286,9 +287,10 @@ def chat(
         choice_id = ""
         save_conv_state("", "", "")
 
-    result = send_message(session, action_token, message,selected_model,attachment_bytes, language, conversation_id, response_id, choice_id)
-    get_details = parse_response(result)
+    full_text, resolved_urls = send_message(session, action_token, message, selected_model, attachment_bytes, language,
+                                            conversation_id, response_id, choice_id)
 
+    get_details = parse_response(full_text)
     conversation_id = get_details.get("conversation_id", conversation_id)
     response_id = get_details.get("response_id", response_id)
     choice_id = get_details.get("choice_id", choice_id)
@@ -298,6 +300,6 @@ def chat(
     return {
         "success": True,
         "text": get_details.get("text", ""),
-        "image_urls": get_details.get("image_urls", []),
+        "image_urls": resolved_urls,
         "conversation_id": conversation_id
     }
